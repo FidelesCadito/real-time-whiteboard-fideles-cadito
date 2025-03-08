@@ -1,0 +1,139 @@
+// BACKEND: WebSocket Server (server/index.js)
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+const server = http.createServer(app);
+
+const io = new Server(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
+});
+
+io.on("connection", (socket) => {
+    console.log("User Connected:", socket.id);
+
+    socket.on("draw", (data) => {
+        socket.broadcast.emit("draw", data);
+    });
+
+    socket.on("cursor", (data) => {
+        socket.broadcast.emit("cursor", data);
+    });
+
+    socket.on("disconnect", () => {
+        console.log("User Disconnected:", socket.id);
+    });
+});
+
+server.listen(4000, () => console.log("Server running on port 4000"));
+
+
+// FRONTEND: Whiteboard Component (src/Whiteboard.js)
+import React, { useRef, useEffect, useState } from "react";
+import { io } from "socket.io-client";
+
+const socket = io("http://localhost:4000");
+
+const Whiteboard = () => {
+    const canvasRef = useRef(null);
+    const ctxRef = useRef(null);
+    const [drawing, setDrawing] = useState(false);
+    const [color, setColor] = useState("black");
+    const [size, setSize] = useState(5);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        canvas.width = window.innerWidth - 50;
+        canvas.height = window.innerHeight - 100;
+        const ctx = canvas.getContext("2d");
+        ctx.lineCap = "round";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = size;
+        ctxRef.current = ctx;
+
+        socket.on("draw", ({ x, y, prevX, prevY, color, size }) => {
+            drawLine(prevX, prevY, x, y, color, size);
+        });
+
+        socket.on("cursor", ({ x, y }) => {
+            drawCursor(x, y);
+        });
+    }, [color, size]);
+
+    const drawLine = (prevX, prevY, x, y, color, size) => {
+        ctxRef.current.strokeStyle = color;
+        ctxRef.current.lineWidth = size;
+        ctxRef.current.beginPath();
+        ctxRef.current.moveTo(prevX, prevY);
+        ctxRef.current.lineTo(x, y);
+        ctxRef.current.stroke();
+    };
+
+    const startDrawing = ({ nativeEvent }) => {
+        setDrawing(true);
+    };
+
+    const stopDrawing = () => {
+        setDrawing(false);
+    };
+
+    const draw = ({ nativeEvent }) => {
+        if (!drawing) return;
+        const { offsetX: x, offsetY: y } = nativeEvent;
+        const { offsetX: prevX, offsetY: prevY } = nativeEvent;
+        drawLine(prevX, prevY, x, y, color, size);
+        socket.emit("draw", { prevX, prevY, x, y, color, size });
+    };
+
+    const drawCursor = (x, y) => {
+        ctxRef.current.fillStyle = "red";
+        ctxRef.current.beginPath();
+        ctxRef.current.arc(x, y, 5, 0, 2 * Math.PI);
+        ctxRef.current.fill();
+    };
+
+    const clearCanvas = () => {
+        ctxRef.current.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    };
+
+    return (
+        <div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "10px" }}>
+                <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+                <input type="range" min="1" max="20" value={size} onChange={(e) => setSize(e.target.value)} />
+                <button onClick={clearCanvas}>Clear</button>
+            </div>
+            <canvas
+                ref={canvasRef}
+                onMouseDown={startDrawing}
+                onMouseUp={stopDrawing}
+                onMouseMove={draw}
+                style={{ border: "2px solid black" }}
+            />
+        </div>
+    );
+};
+
+export default Whiteboard;
+
+
+// FRONTEND: App Entry (src/App.js)
+import React from "react";
+import Whiteboard from "./Whiteboard";
+
+const App = () => {
+    return (
+        <div>
+            <h1>Real-Time Collaborative Whiteboard</h1>
+            <Whiteboard />
+        </div>
+    );
+};
+
+export default App;
